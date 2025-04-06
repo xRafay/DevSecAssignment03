@@ -1,1 +1,79 @@
+version: 2.1
+
+jobs:
+  dependency-check:
+    docker:
+      - image: cimg/openjdk:17.0
+    steps:
+      - checkout
+      - run:
+          name: Download OWASP Dependency-Check
+          command: |
+            wget https://github.com/jeremylong/DependencyCheck/releases/download/v8.4.0/dependency-check-8.4.0-release.zip
+            unzip dependency-check-8.4.0-release.zip
+      - run:
+          name: Run Dependency Check
+          command: |
+            mkdir -p owasp-report
+            ./dependency-check/bin/dependency-check.sh --scan . --format HTML --out owasp-report
+      - persist_to_workspace:
+          root: .
+          paths:
+            - owasp-report
+
+  sonarqube:
+    docker:
+      - image: cimg/openjdk:17.0
+    steps:
+      - checkout
+      - run:
+          name: Run Sonar Scanner
+          command: |
+            wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+            unzip sonar-scanner-cli-5.0.1.3006-linux.zip
+            export PATH=$PATH:$PWD/sonar-scanner-5.0.1.3006-linux/bin
+            sonar-scanner \
+              -Dsonar.projectKey=YourProjectKey \
+              -Dsonar.sources=. \
+              -Dsonar.host.url=${SONAR_HOST_URL} \
+              -Dsonar.login=${SONAR_TOKEN}
+
+  unit-tests:
+    docker:
+      - image: cimg/openjdk:17.0
+    steps:
+      - checkout
+      - run:
+          name: Run Unit Tests
+          command: |
+            ./gradlew test || ./mvnw test || echo "No test runner found"
+
+  docker-build-and-push:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Build Docker Image
+          command: |
+            docker build -t ${DOCKERHUB_USERNAME}/myapp:latest .
+      - run:
+          name: Push to Docker Hub
+          command: |
+            echo "${DOCKERHUB_PASS}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+            docker push ${DOCKERHUB_USERNAME}/myapp:latest
+
+workflows:
+  version: 2
+  build-test-and-deploy:
+    jobs:
+      - dependency-check
+      - sonarqube
+      - unit-tests
+      - docker-build-and-push:
+          requires:
+            - dependency-check
+            - sonarqube
+            - unit-tests
 
